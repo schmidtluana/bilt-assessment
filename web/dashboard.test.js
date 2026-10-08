@@ -30,6 +30,37 @@ test("shows a duplicate event as skipped rather than credited", () => {
   assert.equal(view.tone, "neutral");
 });
 
+test("keeps a partially capped award as a success", () => {
+  const view = buildViewModel(
+    { pointsAwarded: 500, outcome: "AWARDED" },
+    { ...member, pointsThisMonth: 100_000 },
+  );
+
+  assert.equal(view.title, "500 points credited");
+  assert.equal(view.tone, "success");
+  assert.equal(view.progressPercent, 100);
+});
+
+test("never claims a credit for an unknown or missing outcome", () => {
+  for (const outcome of ["SOMETHING_NEW", undefined]) {
+    const view = buildViewModel({ pointsAwarded: 1_500, outcome }, member);
+
+    assert.equal(view.tone, "neutral");
+    assert.doesNotMatch(view.title, /credited/);
+  }
+});
+
+test("does not produce a broken progress bar without a monthly cap", () => {
+  for (const monthlyCap of [0, undefined]) {
+    const view = buildViewModel(
+      { pointsAwarded: 1_500, outcome: "AWARDED" },
+      { ...member, monthlyCap },
+    );
+
+    assert.equal(view.progressPercent, 0);
+  }
+});
+
 test("shows when the member has reached the monthly cap", () => {
   const view = buildViewModel(
     { pointsAwarded: 0, outcome: "CAPPED" },

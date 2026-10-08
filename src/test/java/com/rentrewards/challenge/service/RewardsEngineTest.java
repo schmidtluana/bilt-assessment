@@ -178,4 +178,80 @@ class RewardsEngineTest {
             executor.shutdownNow();
         }
     }
+
+    @RepeatedTest(8)
+    void neverExceedsMonthlyCapWhenDifferentEventsArriveConcurrently() throws Exception {
+        MemberAccount member = new MemberAccount("member-1", 0);
+        List<PaymentEvent> deliveries = new ArrayList<>();
+        for (int i = 0; i < 16; i++) {
+            deliveries.add(new PaymentEvent("evt-" + i, "member-1",
+                    new BigDecimal("10000"), false, LocalDate.of(2026, 3, 1)));
+        }
+
+        List<PointsResult> results = processConcurrently(engine, member, deliveries);
+
+        assertEquals(100_000, member.getPointsForMonth(YearMonth.of(2026, 3)));
+        assertEquals(100_000, results.stream().mapToLong(PointsResult::getPointsAwarded).sum());
+        assertEquals(10, countOutcome(results, ProcessingOutcome.AWARDED));
+        assertEquals(6, countOutcome(results, ProcessingOutcome.CAPPED));
+        assertEquals(0, countOutcome(results, ProcessingOutcome.DUPLICATE));
+    }
+
+    @RepeatedTest(8)
+    void awardsEachEventOnceWhenRedeliveriesOfManyEventsInterleave() throws Exception {
+        int eventCount = 5;
+        int deliveriesPerEvent = 8;
+        MemberAccount member = new MemberAccount("member-1", 0);
+        List<PaymentEvent> events = new ArrayList<>();
+        for (int i = 0; i < eventCount; i++) {
+            events.add(new PaymentEvent("evt-" + i, "member-1",
+                    new BigDecimal("100"), false, LocalDate.of(2026, 3, 1 + i)));
+        }
+        List<PaymentEvent> deliveries = new ArrayList<>();
+        for (int round = 0; round < deliveriesPerEvent; round++) {
+            deliveries.addAll(events);
+        }
+
+        List<PointsResult> results = processConcurrently(engine, member, deliveries);
+
+        assertEquals(eventCount, countOutcome(results, ProcessingOutcome.AWARDED));
+        assertEquals(eventCount * (deliveriesPerEvent - 1),
+                countOutcome(results, ProcessingOutcome.DUPLICATE));
+        assertEquals(eventCount * 100, member.getPointsForMonth(YearMonth.of(2026, 3)));
+    }
+
+    private static long countOutcome(List<PointsResult> results, ProcessingOutcome outcome) {
+        return results.stream().filter(result -> result.getOutcome() == outcome).count();
+    }
+
+    private static List<PointsResult> processConcurrently(
+            RewardsEngine engine, MemberAccount member, List<PaymentEvent> deliveries)
+            throws Exception {
+        int workerCount = deliveries.size();
+        ExecutorService executor = Executors.newFixedThreadPool(workerCount);
+        CountDownLatch ready = new CountDownLatch(workerCount);
+        CountDownLatch start = new CountDownLatch(1);
+
+        try {
+            List<Future<PointsResult>> futures = new ArrayList<>();
+            for (PaymentEvent delivery : deliveries) {
+                futures.add(executor.submit(() -> {
+                    ready.countDown();
+                    start.await();
+                    return engine.processPayment(delivery, member);
+                }));
+            }
+
+            assertTrue(ready.await(2, TimeUnit.SECONDS));
+            start.countDown();
+
+            List<PointsResult> results = new ArrayList<>();
+            for (Future<PointsResult> future : futures) {
+                results.add(future.get(2, TimeUnit.SECONDS));
+            }
+            return results;
+        } finally {
+            executor.shutdownNow();
+        }
+    }
 }
