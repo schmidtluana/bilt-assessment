@@ -6,18 +6,40 @@ const toneClasses = {
 
 const numberFormatter = new Intl.NumberFormat("en-US");
 
-export function buildViewModel(result, member) {
-  const progressPercent = Math.min(
-    100,
-    (member.pointsThisMonth / member.monthlyCap) * 100,
-  );
-
-  return {
+const statusByOutcome = {
+  AWARDED: (result) => ({
     title: `${numberFormatter.format(result.pointsAwarded)} points credited`,
     description: "Your rent payment was processed successfully.",
     tone: "success",
-    progressPercent,
-  };
+  }),
+  DUPLICATE: () => ({
+    title: "Duplicate event skipped",
+    description:
+      "This payment was already processed, so no points were credited again.",
+    tone: "neutral",
+  }),
+  CAPPED: () => ({
+    title: "Monthly cap reached",
+    description:
+      "You have reached this month's points limit, so this payment did not earn additional points.",
+    tone: "warning",
+  }),
+};
+
+const unknownStatus = () => ({
+  title: "Payment status unavailable",
+  description: "We could not determine how this payment was processed.",
+  tone: "neutral",
+});
+
+export function buildViewModel(result, member) {
+  const progressPercent =
+    member.monthlyCap > 0
+      ? Math.min(100, (member.pointsThisMonth / member.monthlyCap) * 100)
+      : 0;
+  const buildStatus = statusByOutcome[result.outcome] ?? unknownStatus;
+
+  return { ...buildStatus(result), progressPercent };
 }
 
 export function renderDashboard(result, member) {
